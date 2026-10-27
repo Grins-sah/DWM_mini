@@ -4,7 +4,7 @@ import {
   Activity, ArrowDownRight, ArrowRight, Bell, Check, ChevronDown, Clapperboard,
   Compass, Film, Flame, Heart, Layers3, LoaderCircle, LogIn, Menu, Plus,
   RefreshCw, Search, Send, Settings2, Sparkles, Star, ThumbsDown, ThumbsUp,
-  UserRound, Users, WandSparkles, X
+  UserRound, Users, WandSparkles, X, History, GitCompare, CheckCircle2
 } from "lucide-react";
 import "./styles.css";
 
@@ -20,6 +20,8 @@ function App() {
   const [preferences, setPreferences] = useState(INITIAL_PREFS);
   const [recommendations, setRecommendations] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  const [clusterExplanation, setClusterExplanation] = useState(null);
+  const [userHistory, setUserHistory] = useState([]);
   const [movies, setMovies] = useState([]);
   const [activeTab, setActiveTab] = useState("discover");
   const [search, setSearch] = useState("");
@@ -67,15 +69,19 @@ function App() {
     setLoading(true);
     setApiError("");
     try {
-      const [profile, recs, notes] = await Promise.all([
+      const [profile, recs, notes, explanation, historyData] = await Promise.all([
         api(`/users/${encodeURIComponent(id)}`),
         api(`/users/${encodeURIComponent(id)}/recommendations?limit=30`),
         api(`/users/${encodeURIComponent(id)}/notifications`),
+        api(`/users/${encodeURIComponent(id)}/cluster-explanation`),
+        api(`/users/${encodeURIComponent(id)}/history?limit=100`),
       ]);
       setUser(profile);
       setPreferences(profile.preferences || {});
       setRecommendations(recs.recommendations || []);
       setNotifications(notes.notifications || []);
+      setClusterExplanation(explanation);
+      setUserHistory(historyData.history || []);
       localStorage.setItem("reelcluster_user", id);
       setUserId(id);
       setShowOnboarding(false);
@@ -106,6 +112,7 @@ function App() {
 
   useEffect(() => {
     if (activeTab === "catalogue") loadMovies(search);
+    if (activeTab === "journey" && userId) loadUserData(userId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
@@ -171,12 +178,13 @@ function App() {
     if (!userId) { setShowOnboarding(true); return; }
     setBusyAction(`${movie.movie_id}-${event_type}`);
     try {
-      await api(`/users/${encodeURIComponent(userId)}/interactions`, {
+      const result = await api(`/users/${encodeURIComponent(userId)}/interactions`, {
         method: "POST",
         body: JSON.stringify({ movie_id: String(movie.movie_id), event_type, rating }),
       });
       await loadUserData(userId);
-      notify(event_type === "like" ? "Added to your taste signals" : event_type === "watchlist" ? "Saved to your watchlist" : "Interaction recorded");
+      const eventLabel = event_type === "watched" ? "Watched" : event_type === "rejected" ? "Rejected" : event_type === "like" ? "Liked" : event_type === "watchlist" ? "Added to watchlist" : "Interaction recorded";
+      notify(result.cluster_changed ? `${eventLabel} · cluster changed to ${result.cluster_after}` : `${eventLabel} · taste profile updated`);
     } catch (error) { setApiError(error.message); }
     finally { setBusyAction(""); }
   };
@@ -240,6 +248,7 @@ function App() {
           <button className={`nav-item ${activeTab === "notifications" ? "active" : ""}`} onClick={() => {setActiveTab("notifications"); setMobileMenu(false);}}><Bell size={18}/> Notifications {unreadCount > 0 && <span className="nav-count">{unreadCount}</span>}</button>
           <button className={`nav-item ${activeTab === "catalogue" ? "active" : ""}`} onClick={() => {setActiveTab("catalogue"); setMobileMenu(false);}}><Film size={18}/> My catalogue</button>
           <button className={`nav-item ${activeTab === "taste" ? "active" : ""}`} onClick={() => {setActiveTab("taste"); setMobileMenu(false);}}><SlidersIcon/> Taste profile</button>
+          <button className={`nav-item ${activeTab === "journey" ? "active" : ""}`} onClick={() => {setActiveTab("journey"); setMobileMenu(false);}}><History size={18}/> Cluster journey</button>
         </nav>
         <div className="sidebar-bottom">
           <div className="cluster-card">
@@ -261,7 +270,7 @@ function App() {
       <main className="main-panel">
         <header className="topbar">
           <button className="icon-button mobile-menu-button" onClick={() => setMobileMenu(true)} aria-label="Open menu"><Menu size={20}/></button>
-          <div className="breadcrumb"><span>Workspace</span><span className="crumb-slash">/</span><strong>{activeTab === "discover" ? "Discover" : activeTab === "notifications" ? "Notifications" : activeTab === "catalogue" ? "My catalogue" : "Taste profile"}</strong></div>
+          <div className="breadcrumb"><span>Workspace</span><span className="crumb-slash">/</span><strong>{activeTab === "discover" ? "Discover" : activeTab === "notifications" ? "Notifications" : activeTab === "catalogue" ? "My catalogue" : activeTab === "journey" ? "Cluster journey" : "Taste profile"}</strong></div>
           <div className="topbar-actions">
             <button className="icon-button notification-button" onClick={() => setActiveTab("notifications")} aria-label="Notifications"><Bell size={18}/>{unreadCount > 0 && <i/>}</button>
             <div className="topbar-divider"/>
@@ -321,6 +330,14 @@ function App() {
           {activeTab === "catalogue" && <section className="subpage"><div className="subpage-heading"><div className="eyebrow eyebrow-muted"><Film size={14}/> YOUR MOVIE SHELF</div><h1>My catalogue</h1><p>Movies added to the application's local database.</p></div><div className="catalogue-toolbar"><div className="search-box"><Search size={16}/><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search local catalogue" onKeyDown={(e) => e.key === "Enter" && loadMovies(search)}/></div><button className="button button-outline" onClick={() => loadMovies(search)}><Search size={15}/> Search</button><button className="button button-primary" onClick={() => setShowNewMovie(true)}><Plus size={15}/> Add movie</button></div><div className="catalogue-list">{movies.map((movie, index) => <div className="catalogue-row" key={movie.movie_id}><div className={`catalogue-thumb ${palette[index % palette.length]}`}><Film size={20}/></div><div className="catalogue-movie-info"><strong>{movie.title}</strong><span>{movie.genres?.join(" · ") || "Genres unavailable"}</span></div><span className="catalogue-id">#{movie.movie_id}</span><span className="catalogue-type">{movie.is_catalogue_movie ? "MOVIELENS" : "NEW RELEASE"}</span></div>)}{!movies.length && <div className="empty-state"><div className="empty-icon"><Film size={24}/></div><h3>Your shelf is ready</h3><p>Search for a movie added to this app, or add a new release to begin.</p><button className="button button-primary" onClick={() => setShowNewMovie(true)}><Plus size={15}/> Add a movie</button></div>}</div></section>}
 
           {activeTab === "taste" && <section className="subpage"><div className="subpage-heading"><div className="eyebrow eyebrow-muted"><Sparkles size={14}/> YOUR PERSONAL ALGORITHM</div><h1>Taste profile</h1><p>Your genre preferences are converted into a feature vector and assigned to a K-Means cluster.</p></div><div className="taste-layout"><div className="taste-panel"><div className="panel-title"><div><h3>Genre affinity</h3><p>Adjust the sliders, then save to update your cluster.</p></div><span className="pill">{user ? `Cluster ${user.cluster_id}` : "Guest"}</span></div><div className="preference-list">{genres.map((genre) => <PreferenceSlider key={genre} genre={genre} value={preferences[genre] ?? 3} onChange={(value) => setPreferences((old) => ({...old, [genre]: value}))}/>)}</div><button className="button button-primary save-preferences" onClick={user ? savePreferences : createUser} disabled={busyAction === "preferences" || loading}>{busyAction === "preferences" ? <LoaderCircle className="spin" size={16}/> : <Check size={16}/>} {user ? "Save taste profile" : "Create my profile"}</button></div><div className="cluster-detail"><div className="cluster-detail-icon"><Layers3 size={22}/></div><span className="eyebrow eyebrow-muted">YOUR ASSIGNMENT</span><div className="cluster-detail-number">{user ? `#${user.cluster_id}` : "—"}</div><h3>{user ? "Cluster assigned" : "Not clustered yet"}</h3><p>{user ? "Your profile is mapped to the nearest learned K-Means centroid. Similar users help shape your recommendations." : "Create a profile to see which preference group best matches your taste."}</p><div className="detail-divider"/><div className="detail-row"><span>Algorithm</span><strong>K-Means</strong></div><div className="detail-row"><span>Feature space</span><strong>Genre ratings</strong></div><div className="detail-row"><span>Preference scale</span><strong>1 – 5</strong></div></div></div></section>}
+          {activeTab === "journey" && <section className="subpage"><div className="subpage-heading"><div className="eyebrow eyebrow-muted"><GitCompare size={14}/> MODEL TRANSPARENCY</div><h1>Cluster journey</h1><p>See the preference combination that placed you in a cluster and how every watch or rejection changes your profile.</p></div>
+            {!user && <div className="empty-state"><div className="empty-icon"><History size={24}/></div><h3>Create or connect a profile</h3><p>Your feature vector and interaction timeline will appear here.</p><button className="button button-primary" onClick={() => setShowOnboarding(true)}>Build my taste profile</button></div>}
+            {user && <><div className="journey-summary-grid"><div className="journey-summary-card"><span>CURRENT CLUSTER</span><strong>#{clusterExplanation?.cluster_id ?? user.cluster_id}</strong><small>K-Means nearest centroid</small></div><div className="journey-summary-card"><span>RECORDED EVENTS</span><strong>{userHistory.filter((item) => item.action_type === "movie_interaction").length}</strong><small>Watches, likes, and rejections</small></div><div className="journey-summary-card"><span>CLUSTER CHANGES</span><strong>{userHistory.filter((item) => item.cluster_changed).length}</strong><small>Across recorded history</small></div></div>
+              <div className="journey-panel"><div className="panel-title"><div><h3>Why this cluster?</h3><p>The complete genre feature vector used for the current assignment.</p></div><span className="pill">Cluster #{user.cluster_id}</span></div><p className="journey-explanation">{clusterExplanation?.interpretation || "The nearest learned K-Means centroid determines your cluster."} Missing genres are filled using your average supplied preference.</p><div className="feature-vector-list">{(clusterExplanation?.feature_vector || []).map((item) => <div className="feature-vector-row" key={item.genre}><span>{item.genre}</span><div className="feature-track"><i style={{width: `${Math.max(0, Math.min(100, item.value / 5 * 100))}%`}}/></div><strong>{Number(item.value).toFixed(1)}</strong><small>{item.provided_by_user ? "Onboarding" : "Imputed"}</small></div>)}</div><div className="centroid-list"><h4>Closest cluster centroids</h4>{(clusterExplanation?.closest_clusters || []).map((item) => <div className={`centroid-row ${item.cluster_id === user.cluster_id ? "centroid-current" : ""}`} key={item.cluster_id}><span>Cluster #{item.cluster_id} {item.cluster_id === user.cluster_id ? "· assigned" : ""}</span><strong>Distance {Number(item.distance).toFixed(4)}</strong></div>)}</div><div className="cluster-top-genres"><h4>Typical genres in your cluster</h4><div className="genre-picker">{(clusterExplanation?.cluster_top_genres || []).map((item) => <span className="genre-chip selected" key={item.genre}>{item.genre} · {Number(item.average_rating).toFixed(1)}/5</span>)}</div></div></div>
+              <div className="journey-panel"><div className="panel-title"><div><h3>Interaction timeline</h3><p>Before/after clusters and genre-affinity deltas are stored for every event.</p></div><span className="pill">{userHistory.length} events</span></div>{!userHistory.length && <p className="journey-explanation">No history yet. Like, mark a movie watched, or reject a recommendation to create the first event.</p>}<div className="history-list">{userHistory.map((item) => <article className="history-item" key={item.history_id}><div className="history-icon">{item.action_type === "movie_interaction" ? <Film size={17}/> : <CheckCircle2 size={17}/>}</div><div className="history-main"><div className="history-heading"><strong>{item.movie_title || (item.action_type === "onboarding" ? "Initial onboarding" : "Taste profile edited")}</strong><span>{new Date(item.created_at).toLocaleString()}</span></div><p>{String(item.event_type || item.action_type).replaceAll("_", " ")} · {item.cluster_before == null ? "No previous cluster" : `Cluster #${item.cluster_before}`} → <strong>Cluster #{item.cluster_after}</strong>{item.cluster_changed ? " · reassigned" : " · same cluster"}</p><div className="history-effects">{Object.entries(item.genre_effect || {}).map(([genre, delta]) => <span className={`effect-chip ${delta > 0 ? "effect-up" : delta < 0 ? "effect-down" : ""}`} key={genre}>{genre} {delta > 0 ? "+" : ""}{Number(delta).toFixed(2)}</span>)}{!Object.keys(item.genre_effect || {}).length && <span className="effect-chip">No genre delta</span>}</div></div></article>)}</div></div>
+            </>}
+          </section>}
+
         </div>
         <footer className="footer"><span>reelcluster <span className="footer-dot">✦</span> made for movie people</span><span>Powered by K-Means clustering <span className="footer-status"><i/> ML API</span></span></footer>
       </main>
@@ -329,7 +346,7 @@ function App() {
         <div className="onboarding-intro"><div className="onboarding-art"><Clapperboard size={25}/><Sparkles size={16}/></div><div><strong>{user ? "Fine-tune your profile" : "Let's find your movie people."}</strong><span>Rate each genre from 1 (not for me) to 5 (love it).</span></div></div>
         <label className="field-label">USER ID <span>Required</span></label><input className="text-input" value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="e.g. movie_fan_01"/>
         <div className="modal-pref-heading"><span>GENRE PREFERENCES</span><span>1 — 5</span></div>
-        <div className="onboarding-genres">{genres.slice(0, 12).map((genre) => <PreferenceSlider key={genre} genre={genre} value={preferences[genre] ?? 3} onChange={(value) => setPreferences((old) => ({...old, [genre]: value}))}/>)}</div>
+        <div className="onboarding-genres">{genres.slice(0, 12).map((genre) => <PreferenceSlider key={genre} genre={genre} value={preferences[genre] ?? 0} onChange={(value) => setPreferences((old) => ({...old, [genre]: value}))}/>)}</div>
         <button className="button button-primary modal-submit" onClick={user ? savePreferences : createUser} disabled={loading || busyAction === "preferences"}>{loading ? <LoaderCircle size={17} className="spin"/> : <Sparkles size={16}/>} {user ? "Save my preferences" : "Find my cluster"} <ArrowRight size={16}/></button>
         {user && <button className="text-button" onClick={() => setShowOnboarding(false)}>Cancel</button>}
       </Modal>}
@@ -373,7 +390,7 @@ function MovieCard({ movie, index, palette, genreEmoji, busyAction, onAction }) 
       <div className="movie-art-grain"/><span className="movie-art-index">{String(index + 1).padStart(2, "0")} / PICK</span><span className="movie-art-glyph">{genreEmoji(movie)}</span><div className="movie-art-lines"/><div className="movie-art-title">{movie.title}</div><div className="movie-art-bottom"><span>{movie.genres?.slice(0, 2).join(" / ") || "MOVIE NIGHT"}</span><span>RC·{String(movie.movie_id).slice(-4)}</span></div>
       <div className="match-badge"><Sparkles size={11}/> CLUSTER PICK</div>
     </div>
-    <div className="movie-card-content"><div className="movie-card-meta"><span className="genre-label">{genre}</span><span className="rating"><Star size={13} fill="currentColor"/>{Number(movie.average_cluster_rating || 0).toFixed(1)} <small>({movie.rating_count_in_cluster || 0})</small></span></div><h3 title={movie.title}>{movie.title}</h3><div className="movie-tags">{(movie.genres || []).slice(0, 3).map((g) => <span key={g}>{g}</span>)}</div><div className="movie-card-actions"><button title="I like this" onClick={() => onAction(movie, "like")} disabled={busyAction === `${movie.movie_id}-like`}><ThumbsUp size={15}/><span>Like</span></button><button title="Not for me" onClick={() => onAction(movie, "dislike")} disabled={busyAction === `${movie.movie_id}-dislike`}><ThumbsDown size={15}/></button><button title="Save to watchlist" className="save-movie" onClick={() => onAction(movie, "watchlist")} disabled={busyAction === `${movie.movie_id}-watchlist`}><Heart size={15}/></button></div></div>
+    <div className="movie-card-content"><div className="movie-card-meta"><span className="genre-label">{genre}</span><span className="rating"><Star size={13} fill="currentColor"/>{Number(movie.average_cluster_rating || 0).toFixed(1)} <small>({movie.rating_count_in_cluster || 0})</small></span></div><h3 title={movie.title}>{movie.title}</h3><div className="movie-tags">{(movie.genres || []).slice(0, 3).map((g) => <span key={g}>{g}</span>)}</div><div className="movie-card-actions"><button title="I like this" onClick={() => onAction(movie, "like")} disabled={busyAction === `${movie.movie_id}-like`}><ThumbsUp size={15}/><span>Like</span></button><button title="Mark watched" onClick={() => onAction(movie, "watched")} disabled={busyAction === `${movie.movie_id}-watched`}><CheckCircle2 size={15}/><span>Watched</span></button><button title="Reject this recommendation" onClick={() => onAction(movie, "rejected")} disabled={busyAction === `${movie.movie_id}-rejected`}><ThumbsDown size={15}/><span>Reject</span></button><button title="Save to watchlist" className="save-movie" onClick={() => onAction(movie, "watchlist")} disabled={busyAction === `${movie.movie_id}-watchlist`}><Heart size={15}/></button></div></div>
   </article>;
 }
 
